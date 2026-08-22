@@ -17,6 +17,6 @@
 <div class="modal" id="modal" onclick="if(event.target===this)closeModal()"><div class="modal-card"><button type="button" class="close" onclick="closeModal()">×</button><img src="logo.svg" alt="" class="modal-logo"><h2 id="modalTitle">Create your VickiEarn account</h2><p id="modalText">Create a secure VickiEarn account.</p><form id="authForm"><input id="fullName" type="text" placeholder="Full name"><input id="email" type="email" placeholder="Email address" required><input id="password" type="password" placeholder="Password" minlength="8" required><input id="refCode" type="text" placeholder="Referral code (optional)"><button class="btn btn-primary full" type="submit" id="authSubmit">Create account</button></form><small id="authStatus"></small></div></div>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase/config.js"></script>
-<script src="app.js?v=20260822-2"></script>
+<script src="app.js?v=20260822-3"></script>
 <script>window.addEventListener('DOMContentLoaded',function(){document.querySelectorAll('[onclick*="openModal"]').forEach(function(b){b.addEventListener('click',function(){if(typeof window.openModal!=='function'){var m=document.getElementById('modal');if(m)m.classList.add('show');}});});});</script>
 </body></html>

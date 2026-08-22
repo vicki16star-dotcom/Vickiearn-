@@ -21,7 +21,6 @@ jobs:
     runs-on: ubuntu-latest
     env:
       SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
-      SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
       SUPABASE_PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_REF }}
     steps:
       - name: Checkout
@@ -46,3 +45,6 @@ jobs:
           supabase functions deploy paystack-webhook --project-ref "$SUPABASE_PROJECT_REF" --no-verify-jwt
           supabase functions deploy paystack-withdraw --project-ref "$SUPABASE_PROJECT_REF"
           supabase functions deploy paystack-transfer --project-ref "$SUPABASE_PROJECT_REF"
+
+      - name: Deployment complete
+        run: echo "All VickiEarn Paystack Edge Functions deployed successfully."

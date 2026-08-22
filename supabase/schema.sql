@@ -109,17 +109,23 @@ $$;
 
 create or replace function public.handle_new_user()
 returns trigger language plpgsql security definer set search_path = public as $$
-declare ref_code text;
+declare ref_code text; referrer_id uuid; new_referral_code text;
 begin
   ref_code := nullif(trim(new.raw_user_meta_data ->> 'referral_code'), '');
+  select id into referrer_id from public.profiles where referral_code = upper(ref_code) limit 1;
+  new_referral_code := public.generate_referral_code();
+
   insert into public.profiles (id, full_name, referral_code, referred_by)
   values (
     new.id,
     coalesce(nullif(trim(new.raw_user_meta_data ->> 'full_name'), ''), 'VickiEarn User'),
-    public.generate_referral_code(),
-    (select id from public.profiles where referral_code = upper(ref_code) limit 1)
+    new_referral_code,
+    referrer_id
   );
   insert into public.wallets (user_id) values (new.id);
+  if referrer_id is not null then
+    insert into public.referrals (referrer_id, referred_id) values (referrer_id, new.id);
+  end if;
   return new;
 end;
 $$;
@@ -142,6 +148,8 @@ begin
   select * into c from public.task_completions where id = completion_id for update;
   if c.id is null or c.status <> 'pending' then raise exception 'invalid completion'; end if;
   select * into t from public.tasks where id = c.task_id for update;
+  if t.status <> 'active' then raise exception 'task is not active'; end if;
+  if t.max_completions is not null and t.completion_count >= t.max_completions then raise exception 'task limit reached'; end if;
   insert into public.transactions(user_id,type,amount_kobo,reference,description,metadata)
   values(c.user_id,'task_reward',t.reward_kobo,'task:'||c.id,'Task reward',jsonb_build_object('task_id',t.id)) returning id into tx;
   update public.wallets set balance_kobo = balance_kobo + t.reward_kobo, lifetime_earned_kobo = lifetime_earned_kobo + t.reward_kobo, updated_at = now() where user_id = c.user_id;

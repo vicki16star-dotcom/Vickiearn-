@@ -1,22 +1,22 @@
-# VickiEarn Supabase setup
+# VickiEarn production setup
 
-## 1. Create the database
+## 1. Database
 
-Open the Supabase SQL Editor and run the complete contents of `supabase/schema.sql`.
+The live Supabase project already contains the authentication/profile/wallet foundation, RLS policies, task tables, task-completion workflow, referral tables, transaction ledger, and withdrawal state functions.
 
-This creates the production foundation for profiles, wallets, transactions, tasks, task completions, referrals, withdrawals and audit logs, with Row Level Security enabled.
+The repository keeps the reproducible SQL under `supabase/schema.sql` and `supabase/migrations/`.
 
 ## 2. Authentication
 
-In Supabase, open Authentication → Providers and enable Email. Configure your production Site URL as:
+Enable Email authentication in Supabase and configure the production Site URL and allowed redirect URL to the live site. The intended GitHub Pages URL is:
 
 `https://vicki16star-dotcom.github.io/Vickiearn-/`
 
-Add the same URL to the allowed redirect URLs as appropriate for your authentication settings.
+The frontend sends `full_name` and an optional referral code through Supabase Auth metadata. A database trigger creates the profile and wallet automatically after signup.
 
-## 3. Create the first administrator
+## 3. Administrator
 
-After registering your own account, use the Supabase SQL Editor as the project owner to promote that account:
+After registering the first administrator account, promote it from the Supabase SQL Editor:
 
 ```sql
 update public.profiles
@@ -24,36 +24,32 @@ set role = 'admin'
 where id = (select id from auth.users where email = 'YOUR_ADMIN_EMAIL');
 ```
 
-Replace `YOUR_ADMIN_EMAIL` with the administrator's email address.
+## 4. Tasks
 
-## 4. Add initial tasks
+The task tables and secure completion/approval functions are deployed. No active tasks are seeded automatically because task rewards should only be created after the platform has confirmed the task source, proof requirements, reward amount, and funding.
 
-Example:
+Example task creation:
 
 ```sql
 insert into public.tasks (title, description, reward_kobo)
-values
-('Complete a survey', 'Complete an eligible survey and submit proof.', 15000),
-('Test an app', 'Test an eligible app and submit the required feedback.', 30000);
+values ('Complete an approved survey', 'Complete the eligible survey and submit proof.', 15000);
 ```
 
-Amounts are stored in kobo. `15000` means ₦150.00.
+`15000` means ₦150.00.
 
-## 5. Production security
+## 5. Payments and withdrawals
 
-Never put a Supabase service-role key, Paystack secret key, database password, or other server secret in this repository or in browser code.
+The repository contains Supabase Edge Functions for Paystack initialization, webhook verification, withdrawal reservation, and admin payout transfer. The database contains atomic wallet reservation/refund/state-transition functions and an idempotent verified-deposit credit function.
 
-The browser uses only the public Supabase URL and publishable key. Financial mutations that require trusted server-side credentials must be implemented with protected server/Edge Functions before live payouts are enabled.
+Before enabling real money, confirm that the Supabase Edge Function secrets are configured with the intended **live** Paystack credentials:
 
-## 6. Remaining production payment work
+- `PAYSTACK_SECRET_KEY`
+- `SUPABASE_SERVICE_ROLE_KEY`
 
-The frontend and database foundation are intentionally separated from the live payout layer. Before real withdrawals are enabled, add a server-side Paystack integration that:
+Never put either secret in browser code or GitHub.
 
-- verifies authenticated users;
-- validates wallet balance atomically;
-- creates an idempotent withdrawal record;
-- creates/uses a Paystack transfer recipient securely;
-- sends the transfer using the Paystack secret key only server-side;
-- verifies Paystack webhooks/signatures;
-- records successful or failed payouts in `transactions`;
-- prevents duplicate payouts and replayed webhooks.
+## 6. Deployment
+
+`main` contains a GitHub Pages workflow at `.github/workflows/pages.yml`, which deploys the static site on every push to `main`. The Supabase Edge Function workflow deploys the Paystack functions when their source changes.
+
+The site should be tested from the actual live deployment URL before public launch. Do not rely on an old Vercel URL if its deployment has been removed.

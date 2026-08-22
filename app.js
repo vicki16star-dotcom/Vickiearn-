@@ -1,12 +1,20 @@
-const supabase = window.vickiearnSupabase || window.supabase?.createClient(window.VICKIEARN_SUPABASE_URL, window.VICKIEARN_SUPABASE_KEY);
-window.vickiearnSupabase = supabase;
-
 const modal = document.getElementById('modal');
 const authForm = document.getElementById('authForm');
 let authMode = 'signup';
+let supabase = null;
 const referralCodeFromUrl = new URLSearchParams(window.location.search).get('ref') || '';
 const refInput = document.getElementById('refCode');
 if (refInput) refInput.value = referralCodeFromUrl;
+
+function getSupabase() {
+  if (supabase) return supabase;
+  if (!window.VICKIEARN_SUPABASE_URL || !window.VICKIEARN_SUPABASE_KEY) return null;
+  if (window.supabase?.createClient) {
+    supabase = window.supabase.createClient(window.VICKIEARN_SUPABASE_URL, window.VICKIEARN_SUPABASE_KEY);
+    window.vickiearnSupabase = supabase;
+  }
+  return supabase;
+}
 
 function authErrorMessage(error) {
   const msg = error?.message || error?.error_description || error?.msg || 'Account creation failed. Please try again.';
@@ -14,6 +22,7 @@ function authErrorMessage(error) {
   if (/password/i.test(msg)) return 'Password must be at least 8 characters.';
   if (/invalid.*email|email.*invalid/i.test(msg)) return 'Please enter a valid email address.';
   if (/rate limit|too many/i.test(msg)) return 'Too many attempts. Please wait a few minutes and try again.';
+  if (/email.*not.*confirmed|not.*confirmed/i.test(msg)) return 'Please verify your email first, then log in.';
   return msg;
 }
 
@@ -28,6 +37,26 @@ async function directAuth(path, body) {
   if (!response.ok) throw new Error(data.msg || data.message || data.error_description || 'Authentication request failed.');
   return data;
 }
+
+async function openModal(type) {
+  authMode = type === 'login' ? 'login' : 'signup';
+  if (type === 'withdraw') {
+    const client = getSupabase();
+    if (client?.auth) {
+      const { data: { user } } = await client.auth.getUser();
+      if (user) { window.location.assign('dashboard.html#wallet'); return; }
+    }
+    authMode = 'login';
+  }
+  document.getElementById('modalTitle').textContent = authMode === 'login' ? 'Welcome back' : 'Create your VickiEarn account';
+  document.getElementById('modalText').textContent = authMode === 'login' ? 'Log in to access your real wallet and dashboard.' : 'Create a secure VickiEarn account.';
+  document.getElementById('authSubmit').textContent = authMode === 'login' ? 'Log in' : 'Create account';
+  document.getElementById('fullName').style.display = authMode === 'login' ? 'none' : 'block';
+  document.getElementById('refCode').style.display = authMode === 'login' ? 'none' : 'block';
+  document.getElementById('authStatus').textContent = '';
+  modal?.classList.add('show');
+}
+function closeModal(){ modal?.classList.remove('show'); }
 
 if (authForm) authForm.addEventListener('submit', async (event) => {
   event.preventDefault();
@@ -44,29 +73,30 @@ if (authForm) authForm.addEventListener('submit', async (event) => {
   submit.textContent = authMode === 'signup' ? 'Creating account…' : 'Signing in…';
   status.textContent = 'Connecting securely…';
   try {
+    const client = getSupabase();
+    let data;
     if (authMode === 'signup') {
-      let data;
-      if (supabase?.auth) {
-        const result = await supabase.auth.signUp({ email, password, options: { data: { full_name: fullName, referral_code: refCode || null } } });
+      if (client?.auth) {
+        const result = await client.auth.signUp({ email, password, options: { data: { full_name: fullName, referral_code: refCode || null }, emailRedirectTo: `${window.location.origin}/dashboard.html` } });
         if (result.error) throw result.error;
         data = result.data;
       } else {
         data = await directAuth('signup', { email, password, data: { full_name: fullName, referral_code: refCode || null } });
       }
-      if (data?.session && supabase?.auth) {
+      if (data?.session) {
         status.textContent = 'Account created. Opening your dashboard…';
         window.location.assign('dashboard.html');
       } else {
-        status.textContent = 'Account created. Check your email for the verification link, then log in.';
+        status.textContent = 'Account created. Check your email to verify it, then log in.';
       }
     } else {
-      if (supabase?.auth) {
-        const { data, error } = await supabase.auth.signInWithPassword({ email, password });
-        if (error) throw error;
-        if (!data?.session) throw new Error('Login succeeded but no session was returned. Please verify your email first.');
+      if (client?.auth) {
+        const result = await client.auth.signInWithPassword({ email, password });
+        if (result.error) throw result.error;
+        if (!result.data?.session) throw new Error('No active session was returned.');
       } else {
         const data = await directAuth('token?grant_type=password', { email, password });
-        if (!data?.access_token) throw new Error('Login succeeded but no session was returned. Please verify your email first.');
+        if (!data?.access_token) throw new Error('No active session was returned.');
       }
       status.textContent = 'Signed in. Opening your dashboard…';
       window.location.assign('dashboard.html');
@@ -80,33 +110,15 @@ if (authForm) authForm.addEventListener('submit', async (event) => {
   }
 });
 
-async function openModal(type) {
-  if (type === 'withdraw') {
-    if (!supabase?.auth) { authMode = 'login'; }
-    else {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) authMode = 'login';
-      else { window.location.assign('dashboard.html#wallet'); return; }
-    }
-  } else authMode = type === 'login' ? 'login' : 'signup';
-  document.getElementById('modalTitle').textContent = authMode === 'login' ? 'Welcome back' : 'Create your VickiEarn account';
-  document.getElementById('modalText').textContent = authMode === 'login' ? 'Log in to access your real wallet and dashboard.' : 'Create a secure VickiEarn account.';
-  document.getElementById('authSubmit').textContent = authMode === 'login' ? 'Log in' : 'Create account';
-  document.getElementById('fullName').style.display = authMode === 'login' ? 'none' : 'block';
-  document.getElementById('refCode').style.display = authMode === 'login' ? 'none' : 'block';
-  document.getElementById('authStatus').textContent = '';
-  modal.classList.add('show');
-}
-function closeModal(){ modal?.classList.remove('show'); }
-
 async function loadUserData(){
-  if (!supabase?.auth) return;
-  const {data:{user}}=await supabase.auth.getUser(); if(!user)return;
+  const client = getSupabase();
+  if (!client?.auth) return;
+  const {data:{user}}=await client.auth.getUser(); if(!user)return;
   const [p,w,r,re]=await Promise.all([
-    supabase.from('profiles').select('full_name,referral_code').eq('id',user.id).single(),
-    supabase.from('wallets').select('balance_kobo,lifetime_earned_kobo').eq('user_id',user.id).single(),
-    supabase.from('referrals').select('*',{count:'exact',head:true}).eq('referrer_id',user.id),
-    supabase.from('transactions').select('amount_kobo').eq('user_id',user.id).eq('type','referral_reward')
+    client.from('profiles').select('full_name,referral_code').eq('id',user.id).single(),
+    client.from('wallets').select('balance_kobo,lifetime_earned_kobo').eq('user_id',user.id).single(),
+    client.from('referrals').select('*',{count:'exact',head:true}).eq('referrer_id',user.id),
+    client.from('transactions').select('amount_kobo').eq('user_id',user.id).eq('type','referral_reward')
   ]);
   if(p.error||w.error){console.error(p.error||w.error);return;}
   const balance=Number(w.data.balance_kobo||0)/100;
@@ -117,14 +129,15 @@ async function loadUserData(){
   document.getElementById('referralEarnings')?.replaceChildren(document.createTextNode(`₦${earnings.toLocaleString('en-NG',{minimumFractionDigits:2,maximumFractionDigits:2})}`));
 }
 async function loadTasks(){
-  const grid=document.getElementById('taskGrid'); if(!grid || !supabase) return;
-  const {data,error}=await supabase.from('tasks').select('id,title,description,reward_kobo,max_completions,completion_count').eq('status','active').order('created_at',{ascending:false});
+  const grid=document.getElementById('taskGrid'); const client=getSupabase(); if(!grid || !client) return;
+  const {data,error}=await client.from('tasks').select('id,title,description,reward_kobo,max_completions,completion_count').eq('status','active').order('created_at',{ascending:false});
   if(error){grid.innerHTML='<p>Tasks are temporarily unavailable.</p>';return;}
   if(!data?.length){grid.innerHTML='<p>No active tasks are available right now.</p>';return;}
   grid.innerHTML=data.map(t=>{const limit=t.max_completions!==null&&t.completion_count>=t.max_completions;return `<article class="task-card"><div class="task-icon">🎯</div><div><h3>${escapeHtml(t.title)}</h3><p>${escapeHtml(t.description)}</p></div><strong>₦${(Number(t.reward_kobo)/100).toLocaleString('en-NG')}</strong><button ${limit?'disabled':''} onclick="claimTask('${t.id}')">${limit?'Completed':'Start task'}</button></article>`}).join('');
 }
-async function claimTask(taskId){if(!supabase?.auth)return;const {data:{user}}=await supabase.auth.getUser();if(!user){openModal('login');return;}const {error}=await supabase.from('task_completions').insert({task_id:taskId,user_id:user.id,proof:{submitted_from:'web'}});if(error){alert(error.message);return;}alert('Task started. Your completion is pending review.');}
+async function claimTask(taskId){const client=getSupabase();if(!client?.auth)return;const {data:{user}}=await client.auth.getUser();if(!user){openModal('login');return;}const {error}=await client.from('task_completions').insert({task_id:taskId,user_id:user.id,proof:{submitted_from:'web'}});if(error){alert(error.message);return;}alert('Task started. Your completion is pending review.');}
 function copyReferral(){const v=document.getElementById('referralLink').textContent;if(v.startsWith('Sign in')){openModal('login');return;}navigator.clipboard?.writeText(v);document.getElementById('copyStatus').textContent='Referral link copied.';}
 function escapeHtml(v){return String(v).replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));}
-if (supabase?.auth) supabase.auth.onAuthStateChange((_event,session)=>{if(session)loadUserData();});
+const client=getSupabase();
+if (client?.auth) client.auth.onAuthStateChange((_event,session)=>{if(session)loadUserData();});
 loadTasks();loadUserData();

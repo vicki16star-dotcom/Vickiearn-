@@ -1,4 +1,4 @@
-import { serve } from 'https://deno.land/std@0.224.0/server.ts'
+import { serve } from 'https://deno.land/std@0.224.0/http/server.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
 const PAYSTACK_SECRET = Deno.env.get('PAYSTACK_SECRET_KEY')
@@ -36,28 +36,13 @@ serve(async (req) => {
     const userId = data.metadata?.user_id
     if (!reference || !userId || !Number.isSafeInteger(amount) || amount <= 0) return new Response('Invalid event', { status: 400 })
 
-    const { data: existing } = await supabase.from('transactions').select('id').eq('reference', `paystack:${reference}`).maybeSingle()
-    if (existing) return new Response('OK', { status: 200 })
-
-    // Insert the unique transaction first. If another webhook wins the race, the unique reference prevents a second credit.
-    const { error: txError } = await supabase.from('transactions').insert({
-      user_id: userId, type: 'deposit', amount_kobo: amount, reference: `paystack:${reference}`,
-      description: 'Verified Paystack payment', metadata: { paystack_reference: reference, customer_email: data.customer?.email || null }
+    const { error } = await supabase.rpc('credit_verified_deposit', {
+      p_reference: `paystack:${reference}`,
+      p_amount_kobo: amount,
+      p_user_id: userId,
+      p_paystack_reference: reference
     })
-    if (txError) {
-      if (txError.code === '23505') return new Response('OK', { status: 200 })
-      return new Response('Transaction failed', { status: 500 })
-    }
-
-    // Credit only after the idempotency record is accepted.
-    const { data: wallet } = await supabase.from('wallets').select('balance_kobo,lifetime_earned_kobo').eq('user_id', userId).single()
-    if (!wallet) return new Response('Wallet not found', { status: 404 })
-    const { error: walletError } = await supabase.from('wallets').update({
-      balance_kobo: Number(wallet.balance_kobo) + amount,
-      lifetime_earned_kobo: Number(wallet.lifetime_earned_kobo || 0) + amount,
-      updated_at: new Date().toISOString()
-    }).eq('user_id', userId)
-    if (walletError) return new Response('Wallet update failed', { status: 500 })
+    if (error) return new Response('Deposit processing failed', { status: 500 })
   }
   return new Response('OK', { status: 200 })
 })

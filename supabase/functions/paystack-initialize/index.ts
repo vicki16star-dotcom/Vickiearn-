@@ -1,4 +1,4 @@
-import { serve } from 'https://deno.land/std@0.224.0/http/server.ts'
+import { serve } from 'https://deno.land/std@0.224.0/server.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
 const PAYSTACK_SECRET = Deno.env.get('PAYSTACK_SECRET_KEY')
@@ -29,3 +29,5 @@ serve(async (req) => {
   const result = await response.json()
   return new Response(JSON.stringify(result), { status: response.status, headers: { 'Content-Type': 'application/json' } })
 })
+
+// Automatic deployment trigger.

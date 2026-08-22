@@ -1,0 +1,6 @@
+const modal=document.getElementById('modal');
+function openModal(type){const title=document.getElementById('modalTitle'),text=document.getElementById('modalText');if(type==='withdraw'){title.textContent='Withdrawal request';text.textContent='Production withdrawals require authentication, verified bank details, balance validation and admin approval. Minimum withdrawal: ₦5,000.'}else if(type==='login'){title.textContent='Welcome back';text.textContent='Log in to access your VickiEarn dashboard.'}else{title.textContent='Create your VickiEarn account';text.textContent='This public frontend is ready for deployment. Connect a secured backend before processing real accounts or payments.'}modal.classList.add('show')}
+function closeModal(){modal.classList.remove('show')}
+function demoSubmit(e){e.preventDefault();alert('Demo only: backend authentication is not connected yet.')}
+function demoTask(){alert('Demo only: task execution is not connected yet.')}
+function copyReferral(){const value='https://vickiearn.com/register?ref=VICKI123';navigator.clipboard?.writeText(value);const el=document.getElementById('copyStatus');if(el)el.textContent='Referral link copied (demo).'}

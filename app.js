@@ -1,66 +1,70 @@
-const { createClient } = window.supabase;
-const supabase = createClient(window.VICKIEARN_SUPABASE_URL, window.VICKIEARN_SUPABASE_KEY);
+const supabase = window.vickiearnSupabase || window.supabase.createClient(window.VICKIEARN_SUPABASE_URL, window.VICKIEARN_SUPABASE_KEY);
 window.vickiearnSupabase = supabase;
 
 const modal = document.getElementById('modal');
 const authForm = document.getElementById('authForm');
 let authMode = 'signup';
 const referralCodeFromUrl = new URLSearchParams(window.location.search).get('ref') || '';
+const refInput = document.getElementById('refCode');
+if (refInput) refInput.value = referralCodeFromUrl;
 
-document.getElementById('refCode').value = referralCodeFromUrl;
-
-authForm.addEventListener('submit', async (event) => {
+if (authForm) authForm.addEventListener('submit', async (event) => {
   event.preventDefault();
   const status = document.getElementById('authStatus');
-  const email = document.getElementById('email').value.trim();
-  const password = document.getElementById('password').value;
-  const fullName = document.getElementById('fullName').value.trim();
-  const refCode = document.getElementById('refCode').value.trim().toUpperCase();
-  status.textContent = 'Please wait…';
+  const submit = document.getElementById('authSubmit');
+  const email = document.getElementById('email')?.value.trim();
+  const password = document.getElementById('password')?.value || '';
+  const fullName = document.getElementById('fullName')?.value.trim() || '';
+  const refCode = document.getElementById('refCode')?.value.trim().toUpperCase() || '';
+  if (!email || !password) { status.textContent = 'Enter your email and password.'; return; }
+  if (authMode === 'signup' && !fullName) { status.textContent = 'Please enter your full name.'; return; }
+  submit.disabled = true;
+  submit.textContent = authMode === 'signup' ? 'Creating account…' : 'Signing in…';
+  status.textContent = 'Connecting securely…';
   try {
     if (authMode === 'signup') {
-      if (!fullName) throw new Error('Please enter your full name.');
-      const { data, error } = await supabase.auth.signUp({ email, password, options: { data: { full_name: fullName, referral_code: refCode || null } } });
+      const { data, error } = await supabase.auth.signUp({
+        email, password,
+        options: { data: { full_name: fullName, referral_code: refCode || null } }
+      });
       if (error) throw error;
-      if (data.session) {
+      if (data?.session) {
         status.textContent = 'Account created. Opening your dashboard…';
-        window.location.href = 'dashboard.html';
+        window.location.assign('dashboard.html');
       } else {
-        status.textContent = 'Account created. Check your email to verify your account, then return here and log in.';
+        status.textContent = 'Account created. Check your email for the verification link, then log in.';
       }
     } else {
       const { data, error } = await supabase.auth.signInWithPassword({ email, password });
       if (error) throw error;
-      if (!data.session) throw new Error('Login did not create a session.');
+      if (!data?.session) throw new Error('Login succeeded but no session was returned. Please try again.');
       status.textContent = 'Signed in. Opening your dashboard…';
-      window.location.href = 'dashboard.html';
+      window.location.assign('dashboard.html');
     }
-  } catch (error) { status.textContent = error.message || 'Something went wrong.'; }
+  } catch (error) {
+    console.error('VickiEarn authentication error:', error);
+    status.textContent = error?.message || 'Account creation failed. Please try again.';
+  } finally {
+    submit.disabled = false;
+    submit.textContent = authMode === 'signup' ? 'Create account' : 'Log in';
+  }
 });
 
 async function openModal(type) {
   if (type === 'withdraw') {
     const { data: { user } } = await supabase.auth.getUser();
-    if (!user) { authMode = 'login'; }
-    else { window.location.href = 'dashboard.html#wallet'; return; }
+    if (!user) authMode = 'login';
+    else { window.location.assign('dashboard.html#wallet'); return; }
   } else authMode = type === 'login' ? 'login' : 'signup';
-
-  const title = document.getElementById('modalTitle');
-  const text = document.getElementById('modalText');
-  const submit = document.getElementById('authSubmit');
-  const name = document.getElementById('fullName');
-  const ref = document.getElementById('refCode');
-  const status = document.getElementById('authStatus');
-  authForm.style.display = 'block';
-  title.textContent = authMode === 'login' ? 'Welcome back' : 'Create your VickiEarn account';
-  text.textContent = authMode === 'login' ? 'Log in to access your real wallet and dashboard.' : 'Create a secure VickiEarn account.';
-  submit.textContent = authMode === 'login' ? 'Log in' : 'Create account';
-  name.style.display = authMode === 'login' ? 'none' : 'block';
-  ref.style.display = authMode === 'login' ? 'none' : 'block';
-  status.textContent = '';
+  document.getElementById('modalTitle').textContent = authMode === 'login' ? 'Welcome back' : 'Create your VickiEarn account';
+  document.getElementById('modalText').textContent = authMode === 'login' ? 'Log in to access your real wallet and dashboard.' : 'Create a secure VickiEarn account.';
+  document.getElementById('authSubmit').textContent = authMode === 'login' ? 'Log in' : 'Create account';
+  document.getElementById('fullName').style.display = authMode === 'login' ? 'none' : 'block';
+  document.getElementById('refCode').style.display = authMode === 'login' ? 'none' : 'block';
+  document.getElementById('authStatus').textContent = '';
   modal.classList.add('show');
 }
-function closeModal(){modal.classList.remove('show');}
+function closeModal(){ modal?.classList.remove('show'); }
 
 async function loadUserData(){
   const {data:{user}}=await supabase.auth.getUser(); if(!user)return;
@@ -78,7 +82,6 @@ async function loadUserData(){
   document.getElementById('referralCount')?.replaceChildren(document.createTextNode(`${r.count||0} referrals`));
   document.getElementById('referralEarnings')?.replaceChildren(document.createTextNode(`₦${earnings.toLocaleString('en-NG',{minimumFractionDigits:2,maximumFractionDigits:2})}`));
 }
-
 async function loadTasks(){
   const grid=document.getElementById('taskGrid'); if(!grid)return;
   const {data,error}=await supabase.from('tasks').select('id,title,description,reward_kobo,max_completions,completion_count').eq('status','active').order('created_at',{ascending:false});
@@ -89,6 +92,5 @@ async function loadTasks(){
 async function claimTask(taskId){const {data:{user}}=await supabase.auth.getUser();if(!user){openModal('login');return;}const {error}=await supabase.from('task_completions').insert({task_id:taskId,user_id:user.id,proof:{submitted_from:'web'}});if(error){alert(error.message);return;}alert('Task started. Your completion is pending review.');}
 function copyReferral(){const v=document.getElementById('referralLink').textContent;if(v.startsWith('Sign in')){openModal('login');return;}navigator.clipboard?.writeText(v);document.getElementById('copyStatus').textContent='Referral link copied.';}
 function escapeHtml(v){return String(v).replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));}
-
 supabase.auth.onAuthStateChange((_event,session)=>{if(session)loadUserData();});
 loadTasks();loadUserData();

@@ -22,28 +22,42 @@ authForm.addEventListener('submit', async (event) => {
       if (!fullName) throw new Error('Please enter your full name.');
       const { data, error } = await supabase.auth.signUp({ email, password, options: { data: { full_name: fullName, referral_code: refCode || null } } });
       if (error) throw error;
-      status.textContent = data.session ? 'Account created and signed in.' : 'Account created. Check your email to verify your account, then log in.';
-      if (data.session) { await loadUserData(); setTimeout(closeModal, 500); }
+      if (data.session) {
+        status.textContent = 'Account created. Opening your dashboard…';
+        window.location.href = 'dashboard.html';
+      } else {
+        status.textContent = 'Account created. Check your email to verify your account, then return here and log in.';
+      }
     } else {
-      const { error } = await supabase.auth.signInWithPassword({ email, password });
+      const { data, error } = await supabase.auth.signInWithPassword({ email, password });
       if (error) throw error;
-      status.textContent = 'Signed in successfully.';
-      await loadUserData();
-      setTimeout(closeModal, 500);
+      if (!data.session) throw new Error('Login did not create a session.');
+      status.textContent = 'Signed in. Opening your dashboard…';
+      window.location.href = 'dashboard.html';
     }
   } catch (error) { status.textContent = error.message || 'Something went wrong.'; }
 });
 
-function openModal(type) {
-  authMode = type === 'login' ? 'login' : 'signup';
+async function openModal(type) {
+  if (type === 'withdraw') {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) { authMode = 'login'; }
+    else { window.location.href = 'dashboard.html#wallet'; return; }
+  } else authMode = type === 'login' ? 'login' : 'signup';
+
   const title = document.getElementById('modalTitle');
   const text = document.getElementById('modalText');
   const submit = document.getElementById('authSubmit');
   const name = document.getElementById('fullName');
   const ref = document.getElementById('refCode');
   const status = document.getElementById('authStatus');
-  if (type === 'withdraw') { title.textContent='Withdrawal request'; text.textContent='Enter your payout details.'; authForm.style.display='none'; document.getElementById('withdrawForm')?.classList.add('show'); }
-  else { document.getElementById('withdrawForm')?.classList.remove('show'); authForm.style.display='block'; title.textContent=authMode==='login'?'Welcome back':'Create your VickiEarn account'; text.textContent=authMode==='login'?'Log in to access your account.':'Create a secure VickiEarn account.'; submit.textContent=authMode==='login'?'Log in':'Create account'; name.style.display=authMode==='login'?'none':'block'; ref.style.display=authMode==='login'?'none':'block'; status.textContent=''; }
+  authForm.style.display = 'block';
+  title.textContent = authMode === 'login' ? 'Welcome back' : 'Create your VickiEarn account';
+  text.textContent = authMode === 'login' ? 'Log in to access your real wallet and dashboard.' : 'Create a secure VickiEarn account.';
+  submit.textContent = authMode === 'login' ? 'Log in' : 'Create account';
+  name.style.display = authMode === 'login' ? 'none' : 'block';
+  ref.style.display = authMode === 'login' ? 'none' : 'block';
+  status.textContent = '';
   modal.classList.add('show');
 }
 function closeModal(){modal.classList.remove('show');}

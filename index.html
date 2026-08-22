@@ -26,48 +26,10 @@ function openModal(type){authMode=type==='login'?'login':'signup';document.getEl
 function closeModal(){document.getElementById('modal').classList.remove('show');}
 async function handleAuthSubmit(ev){ev.preventDefault();return window.handleAuthSubmitFromApp?window.handleAuthSubmitFromApp(ev):false;}
 </script>
-<script src="app.js?v=20260822-9"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="supabase/config.js"></script>
+<script src="app.js?v=20260822-10"></script>
 <script>
-// VickiEarn email-only authentication override. Supabase email OTP uses the 6-digit {{ .Token }} from the email template.
-window.handleAuthSubmitFromApp=async function(ev){
- ev.preventDefault();
- const c=window.vickiearnSupabase||client();
- const b=document.getElementById('authSubmit');
- const email=document.getElementById('email').value.trim().toLowerCase();
- const password=document.getElementById('password').value;
- const confirm=document.getElementById('confirmPassword').value;
- const full=document.getElementById('fullName').value.trim();
- const ref=document.getElementById('refCode').value.trim().toUpperCase();
- if(!c?.auth){status('Authentication service did not load. Please refresh and try again.',true);return false;}
- if(!email||!email.includes('@')){status('Enter a valid email address.',true);return false;}
- if(authMode==='signup'){
-  if(!full){status('Please enter your full name.',true);return false;}
-  if(!/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d).{8,}$/.test(password)){status('Password must be at least 8 characters and include uppercase, lowercase, and a number.',true);return false;}
-  if(password!==confirm){status('Passwords do not match.',true);return false;}
-  b.disabled=true;b.textContent='Sending code…';status('Sending your email verification code…');
-  try{
-   const {data,error}=await c.auth.signUp({email,password,options:{data:{full_name:full,referral_code:ref||null}}});
-   if(error)throw error;
-   if(data.session){location.href='dashboard.html';return false;}
-   window.emailOtpPending={email,password,full,ref};
-   const form=document.getElementById('authForm');
-   document.getElementById('modalTitle').textContent='Verify your email';
-   document.getElementById('modalText').textContent='Enter the 6-digit code sent to '+email+'.';
-   form.innerHTML='<input id="emailOtpCode" inputmode="numeric" autocomplete="one-time-code" maxlength="6" pattern="[0-9]{6}" placeholder="6-digit verification code" required><button class="btn btn-primary full" type="submit" id="emailOtpSubmit">Verify email</button><button class="btn btn-light full" type="button" id="emailOtpResend">Send code again</button><button class="btn btn-ghost full" type="button" onclick="location.reload()">Back</button>';
-   form.onsubmit=verifyEmailOtp;
-   document.getElementById('emailOtpResend').onclick=resendEmailOtp;
-   document.getElementById('emailOtpCode').focus();
-   status('Verification code sent. Check your email.');
-  }catch(e){status(e.message||'Could not send verification code.',true);}
-  finally{if(document.getElementById('authSubmit')){b.disabled=false;b.textContent='Create account';}}
- }else{
-  b.disabled=true;b.textContent='Signing in…';status('Signing you in…');
-  try{const {data,error}=await c.auth.signInWithPassword({email,password});if(error)throw error;if(!data.session)throw new Error('No active session was returned.');location.href='dashboard.html';}
-  catch(e){status(e.message||'Login failed.',true);}finally{b.disabled=false;b.textContent='Log in';}
- }
- return false;
-};
-async function resendEmailOtp(){const c=window.vickiearnSupabase||client(),email=window.emailOtpPending?.email,b=document.getElementById('emailOtpResend');if(!c?.auth||!email)return;b.disabled=true;try{const {error}=await c.auth.signInWithOtp({email,options:{shouldCreateUser:false}});if(error)throw error;status('A new 6-digit code has been sent to your email.');}catch(e){status(e.message||'Could not resend the code.',true);}finally{b.disabled=false;}}
-async function verifyEmailOtp(ev){ev.preventDefault();const c=window.vickiearnSupabase||client(),email=window.emailOtpPending?.email,code=document.getElementById('emailOtpCode')?.value.trim(),b=document.getElementById('emailOtpSubmit');if(!/^\d{6}$/.test(code)){status('Enter the 6-digit code from your email.',true);return false;}b.disabled=true;b.textContent='Verifying…';status('Checking your code…');try{const {data,error}=await c.auth.verifyOtp({email,token:code,type:'email'});if(error)throw error;if(!data.session)throw new Error('Verification succeeded but no login session was returned.');status('Email verified. Opening your dashboard…');setTimeout(()=>location.href='dashboard.html',300);}catch(e){status(e.message||'Invalid or expired code. Request a new code.',true);}finally{b.disabled=false;b.textContent='Verify email';}return false;}
+window.handleAuthSubmitFromApp=window.handleAuthSubmitFromApp;
 </script>
 </body></html>

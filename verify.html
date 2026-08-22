@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>VickiEarn — Verify your email</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<main style="min-height:100vh;display:grid;place-items:center;padding:24px">
+<section class="modal-card" style="max-width:520px;width:100%;position:relative">
+<img src="logo.svg" alt="VickiEarn" class="modal-logo">
+<h1>Verify your email</h1>
+<p id="intro">Enter the 6-digit verification code we sent to your email address.</p>
+<form id="verifyForm">
+<input id="emailOtpCode" inputmode="numeric" autocomplete="one-time-code" maxlength="6" pattern="[0-9]{6}" placeholder="6-digit verification code" required style="font-size:22px;letter-spacing:6px;text-align:center">
+<button class="btn btn-primary full" type="submit" id="verifyBtn">Verify email</button>
+</form>
+<button class="btn btn-light full" type="button" id="resendBtn" style="margin-top:10px">Send code again</button>
+<a class="btn btn-ghost full" href="index.html" style="margin-top:10px;text-align:center">Back to signup</a>
+<p id="verifyStatus" style="margin-top:16px"></p>
+</section>
+</main>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="supabase/config.js"></script>
+<script>
+const params=new URLSearchParams(location.search);const email=(params.get('email')||'').trim().toLowerCase();
+const client=window.supabase?.createClient(window.VICKIEARN_SUPABASE_URL,window.VICKIEARN_SUPABASE_KEY);const code=document.getElementById('emailOtpCode'),statusEl=document.getElementById('verifyStatus'),verifyBtn=document.getElementById('verifyBtn'),resendBtn=document.getElementById('resendBtn');
+function status(t,error=false){statusEl.textContent=t;statusEl.style.color=error?'#b42318':'';}
+if(!email){status('No email address was supplied. Please return to signup.',true);verifyBtn.disabled=true;resendBtn.disabled=true;}else{document.getElementById('intro').textContent=`Enter the 6-digit verification code sent to ${email}.`;code.focus();if(params.get('retry')==='1')status('The email service is temporarily rate-limited. If you already received a code, enter it here. You can try sending another code later.');}
+async function verify(){const token=code.value.trim();if(!/^\d{6}$/.test(token)){status('Enter the 6-digit code from your email.',true);return;}verifyBtn.disabled=true;verifyBtn.textContent='Verifying…';status('Checking your code…');try{const {data,error}=await client.auth.verifyOtp({email,token,type:'email'});if(error)throw error;if(!data.session)throw new Error('Verification succeeded but no login session was returned.');status('Email verified. Opening your dashboard…');setTimeout(()=>location.href='dashboard.html',300);}catch(e){status(e.message||'Invalid or expired code. Request a new code.',true);}finally{verifyBtn.disabled=false;verifyBtn.textContent='Verify email';}}
+async function resend(){resendBtn.disabled=true;resendBtn.textContent='Sending…';try{const {error}=await client.auth.signInWithOtp({email,options:{shouldCreateUser:false}});if(error)throw error;status('A new 6-digit code has been sent to your email.');}catch(e){status(e.message||'Could not resend the code. Please wait and try again.',true);}finally{resendBtn.disabled=false;resendBtn.textContent='Send code again';}}
+document.getElementById('verifyForm').addEventListener('submit',e=>{e.preventDefault();verify();});resendBtn.addEventListener('click',resend);
+</script>
+</body></html>

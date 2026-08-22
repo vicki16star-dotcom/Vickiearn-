@@ -6,3 +6,5 @@ A way of earning
 This is a static website deployed with GitHub Pages via GitHub Actions.
 
 Deployment workflow: `.github/workflows/pages.yml`.
+
+Deployment trigger has been refreshed.

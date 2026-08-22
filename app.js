@@ -9,106 +9,118 @@ if (refInput) refInput.value = referralCodeFromUrl;
 function getSupabase() {
   if (supabase) return supabase;
   if (!window.VICKIEARN_SUPABASE_URL || !window.VICKIEARN_SUPABASE_KEY) return null;
-  if (window.supabase?.createClient) {
+  if (window.supabase && typeof window.supabase.createClient === 'function') {
     supabase = window.supabase.createClient(window.VICKIEARN_SUPABASE_URL, window.VICKIEARN_SUPABASE_KEY);
     window.vickiearnSupabase = supabase;
   }
   return supabase;
 }
 
+function setAuthStatus(message, isError = false) {
+  const status = document.getElementById('authStatus');
+  if (!status) return;
+  status.textContent = message;
+  status.style.color = isError ? '#b42318' : '';
+}
+
 function authErrorMessage(error) {
-  const msg = error?.message || error?.error_description || error?.msg || 'Account creation failed. Please try again.';
+  const msg = String(error?.message || error?.error_description || error?.msg || error || 'Account creation failed. Please try again.');
   if (/email.*already|already.*registered|user.*already/i.test(msg)) return 'That email is already registered. Use Login instead.';
   if (/password/i.test(msg)) return 'Password must be at least 8 characters.';
   if (/invalid.*email|email.*invalid/i.test(msg)) return 'Please enter a valid email address.';
   if (/rate limit|too many/i.test(msg)) return 'Too many attempts. Please wait a few minutes and try again.';
   if (/email.*not.*confirmed|not.*confirmed/i.test(msg)) return 'Please verify your email first, then log in.';
+  if (/failed to fetch|networkerror|network request/i.test(msg)) return 'Connection failed. Please check your internet connection and try again.';
   return msg;
 }
 
 async function directAuth(path, body) {
-  if (!window.VICKIEARN_SUPABASE_URL || !window.VICKIEARN_SUPABASE_KEY) throw new Error('Supabase configuration is missing.');
-  const response = await fetch(`${window.VICKIEARN_SUPABASE_URL}/auth/v1/${path}`, {
-    method: 'POST',
-    headers: { apikey: window.VICKIEARN_SUPABASE_KEY, 'Content-Type': 'application/json' },
-    body: JSON.stringify(body)
-  });
-  const data = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(data.msg || data.message || data.error_description || 'Authentication request failed.');
-  return data;
+  const base = window.VICKIEARN_SUPABASE_URL;
+  const key = window.VICKIEARN_SUPABASE_KEY;
+  if (!base || !key) throw new Error('Supabase configuration is missing.');
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 15000);
+  try {
+    const response = await fetch(`${base}/auth/v1/${path}`, {
+      method: 'POST',
+      headers: { apikey: key, 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: controller.signal
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.msg || data.message || data.error_description || data.error || `Authentication failed (${response.status}).`);
+    return data;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 async function openModal(type) {
   authMode = type === 'login' ? 'login' : 'signup';
-  if (type === 'withdraw') {
-    const client = getSupabase();
-    if (client?.auth) {
-      const { data: { user } } = await client.auth.getUser();
-      if (user) { window.location.assign('dashboard.html#wallet'); return; }
-    }
-    authMode = 'login';
-  }
   document.getElementById('modalTitle').textContent = authMode === 'login' ? 'Welcome back' : 'Create your VickiEarn account';
   document.getElementById('modalText').textContent = authMode === 'login' ? 'Log in to access your real wallet and dashboard.' : 'Create a secure VickiEarn account.';
   document.getElementById('authSubmit').textContent = authMode === 'login' ? 'Log in' : 'Create account';
   document.getElementById('fullName').style.display = authMode === 'login' ? 'none' : 'block';
   document.getElementById('refCode').style.display = authMode === 'login' ? 'none' : 'block';
-  document.getElementById('authStatus').textContent = '';
+  setAuthStatus('');
   modal?.classList.add('show');
 }
 function closeModal(){ modal?.classList.remove('show'); }
 
-if (authForm) authForm.addEventListener('submit', async (event) => {
-  event.preventDefault();
-  const status = document.getElementById('authStatus');
+async function handleAuthSubmit(event) {
+  if (event) event.preventDefault();
   const submit = document.getElementById('authSubmit');
   const email = document.getElementById('email')?.value.trim();
   const password = document.getElementById('password')?.value || '';
   const fullName = document.getElementById('fullName')?.value.trim() || '';
   const refCode = document.getElementById('refCode')?.value.trim().toUpperCase() || '';
-  if (!email || !password) { status.textContent = 'Enter your email and password.'; return; }
-  if (authMode === 'signup' && !fullName) { status.textContent = 'Please enter your full name.'; return; }
-  if (password.length < 8) { status.textContent = 'Password must be at least 8 characters.'; return; }
+  if (!email || !password) { setAuthStatus('Enter your email and password.', true); return false; }
+  if (authMode === 'signup' && !fullName) { setAuthStatus('Please enter your full name.', true); return false; }
+  if (password.length < 8) { setAuthStatus('Password must be at least 8 characters.', true); return false; }
   submit.disabled = true;
   submit.textContent = authMode === 'signup' ? 'Creating account…' : 'Signing in…';
-  status.textContent = 'Connecting securely…';
+  setAuthStatus('Connecting securely…');
   try {
     const client = getSupabase();
     let data;
     if (authMode === 'signup') {
-      if (client?.auth) {
-        const result = await client.auth.signUp({ email, password, options: { data: { full_name: fullName, referral_code: refCode || null }, emailRedirectTo: `${window.location.origin}/dashboard.html` } });
+      if (client?.auth?.signUp) {
+        const result = await client.auth.signUp({ email, password, options: { data: { full_name: fullName, referral_code: refCode || null }, emailRedirectTo: `${window.location.origin}${window.location.pathname.replace(/\/[^/]*$/, '/') }dashboard.html` } });
         if (result.error) throw result.error;
         data = result.data;
       } else {
         data = await directAuth('signup', { email, password, data: { full_name: fullName, referral_code: refCode || null } });
       }
       if (data?.session) {
-        status.textContent = 'Account created. Opening your dashboard…';
-        window.location.assign('dashboard.html');
+        setAuthStatus('Account created. Opening your dashboard…');
+        window.location.href = 'dashboard.html';
       } else {
-        status.textContent = 'Account created. Check your email to verify it, then log in.';
+        setAuthStatus('Account created successfully. Check your email to verify it, then use Login.');
       }
     } else {
-      if (client?.auth) {
+      if (client?.auth?.signInWithPassword) {
         const result = await client.auth.signInWithPassword({ email, password });
         if (result.error) throw result.error;
         if (!result.data?.session) throw new Error('No active session was returned.');
       } else {
-        const data = await directAuth('token?grant_type=password', { email, password });
-        if (!data?.access_token) throw new Error('No active session was returned.');
+        const loginData = await directAuth('token?grant_type=password', { email, password });
+        if (!loginData?.access_token) throw new Error('No active session was returned.');
       }
-      status.textContent = 'Signed in. Opening your dashboard…';
-      window.location.assign('dashboard.html');
+      setAuthStatus('Signed in. Opening your dashboard…');
+      window.location.href = 'dashboard.html';
     }
   } catch (error) {
     console.error('VickiEarn authentication error:', error);
-    status.textContent = authErrorMessage(error);
+    setAuthStatus(authErrorMessage(error), true);
   } finally {
     submit.disabled = false;
     submit.textContent = authMode === 'signup' ? 'Create account' : 'Log in';
   }
-});
+  return false;
+}
+
+if (authForm) authForm.addEventListener('submit', handleAuthSubmit);
+window.handleAuthSubmit = handleAuthSubmit;
 
 async function loadUserData(){
   const client = getSupabase();

@@ -1,40 +1,10 @@
 (() => {
-  const SUPABASE_URL = window.VICKIEARN_SUPABASE_URL;
-  const supabase = window.vickiearnSupabase;
-  if (!SUPABASE_URL || !supabase) return;
-
-  async function requireUser() {
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) throw new Error('Please log in first.');
-    return user;
-  }
-
-  async function initializeDeposit(amountNaira) {
-    const user = await requireUser();
-    const amount = Math.round(Number(amountNaira) * 100);
-    if (!Number.isSafeInteger(amount) || amount < 100) throw new Error('Enter a valid amount.');
-
-    const { data, error } = await supabase.functions.invoke('paystack-initialize', {
-      body: { amount_kobo: amount, callback_url: `${location.origin}${location.pathname}?payment=return` }
-    });
-    if (error) throw error;
-    if (!data?.status || !data?.data?.authorization_url) throw new Error(data?.message || 'Unable to initialize payment.');
-    location.href = data.data.authorization_url;
-  }
-
-  async function requestWithdrawal(amountNaira, accountName, accountNumber, bankCode) {
-    await requireUser();
-    const amount = Math.round(Number(amountNaira) * 100);
-    if (!Number.isSafeInteger(amount)) throw new Error('Enter a valid amount.');
-    const { data, error } = await supabase.rpc('create_withdrawal_request', {
-      p_amount_kobo: amount,
-      p_account_name: accountName,
-      p_account_number: accountNumber,
-      p_bank_code: bankCode
-    });
-    if (error) throw error;
-    return data;
-  }
-
-  window.VickiEarnPayments = { initializeDeposit, requestWithdrawal };
+  const supabase=window.vickiearnSupabase;
+  if(!supabase)return;
+  async function requireUser(){const {data:{user}}=await supabase.auth.getUser();if(!user)throw new Error('Please log in first.');return user;}
+  async function initializeDeposit(amountNaira){await requireUser();const amount=Math.round(Number(amountNaira)*100);if(!Number.isSafeInteger(amount)||amount<100)throw new Error('Enter a valid amount.');const {data,error}=await supabase.functions.invoke('paystack-initialize',{body:{amount_kobo:amount,callback_url:`${location.origin}${location.pathname}?payment=return`}});if(error)throw error;if(!data?.status||!data?.data?.authorization_url)throw new Error(data?.message||'Unable to initialize payment.');location.href=data.data.authorization_url;}
+  async function verifyReturnedPayment(){const params=new URLSearchParams(location.search);const reference=params.get('reference')||params.get('trxref');if(!reference)return false;try{await requireUser();const {data,error}=await supabase.functions.invoke('paystack-verify',{body:{reference}});if(error)throw error;if(!data?.status)throw new Error(data?.message||'Payment verification failed.');showToastSafe('Payment verified and wallet credited.');history.replaceState({},document.title,location.pathname);return true}catch(e){showToastSafe(e.message||'Payment verification failed.');return false}}
+  async function requestWithdrawal(amountNaira,accountName,accountNumber,bankCode){await requireUser();const amount=Math.round(Number(amountNaira)*100);if(!Number.isSafeInteger(amount)||amount<500000)throw new Error('Minimum withdrawal is ₦5,000.');if(!/^\d{10}$/.test(String(accountNumber||'')))throw new Error('Enter a valid 10-digit account number.');if(!String(accountName||'').trim()||!String(bankCode||'').trim())throw new Error('Valid bank details are required.');const {data,error}=await supabase.functions.invoke('paystack-transfer',{body:{amount_kobo:amount,account_name:String(accountName).trim(),account_number:String(accountNumber).trim(),bank_code:String(bankCode).trim()}});if(error)throw error;if(!data?.status)throw new Error(data?.message||'Withdrawal failed.');return data.withdrawal_id;}
+  function showToastSafe(message){const t=document.getElementById('toast');if(t){t.textContent=message;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),3200)}}
+  window.VickiEarnPayments={initializeDeposit,requestWithdrawal,verifyReturnedPayment};
 })();

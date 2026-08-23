@@ -1,4 +1,4 @@
-import { serve } from 'https://deno.land/std@0.224.0/http/server.ts'
+import { serve } from 'https://deno.land/std@0.224.0/server.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
 const PAYSTACK_SECRET = Deno.env.get('PAYSTACK_SECRET_KEY')
@@ -16,13 +16,29 @@ serve(async (req) => {
   if (!user) return json({ message: 'Unauthorized' }, 401)
 
   const body = await req.json().catch(() => null)
-  const amount = Number(body?.amount_kobo)
+  const requestedAmount = Number(body?.amount_kobo)
+  const tierId = typeof body?.tier_id === 'string' ? body.tier_id : null
+  let amount = requestedAmount
+  let tier: { id: string; name: string; amount_kobo: number } | null = null
+
+  if (tierId) {
+    const { data, error } = await supabase.from('premium_tiers').select('id,name,amount_kobo').eq('id', tierId).maybeSingle()
+    if (error || !data) return json({ message: 'Premium tier not found' }, 400)
+    tier = data
+    amount = Number(data.amount_kobo)
+    if (requestedAmount !== amount) return json({ message: 'Premium amount does not match the selected tier' }, 400)
+  }
+
   if (!Number.isSafeInteger(amount) || amount < 100) return json({ message: 'Invalid amount' }, 400)
+
+  const metadata = tier
+    ? { user_id: user.id, purchase_type: 'premium_task_access', tier_id: tier.id, tier_name: tier.name }
+    : { user_id: user.id, purchase_type: 'wallet_deposit' }
 
   const response = await fetch('https://api.paystack.co/transaction/initialize', {
     method: 'POST',
     headers: { Authorization: `Bearer ${PAYSTACK_SECRET}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email: user.email, amount, metadata: { user_id: user.id }, callback_url: body?.callback_url || undefined })
+    body: JSON.stringify({ email: user.email, amount, metadata, callback_url: body?.callback_url || undefined })
   })
   const result = await response.json()
   return json(result, response.status)

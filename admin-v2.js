@@ -8,7 +8,7 @@ const fmt = (d) => d ? new Date(d).toLocaleString('en-NG',{dateStyle:'medium',ti
 const timeout = (p, ms, label) => Promise.race([p, new Promise((_, reject) => setTimeout(() => reject(new Error(`${label} timed out`)), ms))]);
 
 function status(text, error=false){ const el=$('adminEmail'); if(el){el.textContent=text;el.classList.toggle('error-text',error);} }
-function toast(text,error=false){ const el=$('toast'); if(!el)return; el.textContent=text; el.className=`toast show ${error?'error':''}`; setTimeout(()=>el.className='toast',3000); }
+function toast(text,error=false){ const el=$('toast'); if(!el)return; el.textContent=text; el.className=`toast show ${error?'error':''}`; setTimeout(()=>el.className='toast',3500); }
 function box(id,text,error=false){ const el=$(id); if(el){el.innerHTML=`<div class="empty ${error?'error-text':''}">${esc(text)}</div>`;} }
 async function rpc(name,args={}){ if(!sb) throw new Error('Secure connection library is unavailable'); const r=await timeout(sb.rpc(name,args),6000,`Secure action ${name}`); if(r.error) throw r.error; return r.data; }
 
@@ -78,7 +78,15 @@ async function loadWithdrawals(){
   const ids=[...new Set(rows.map(x=>x.user_id).filter(Boolean))];
   const pr=ids.length?await timeout(sb.from('profiles').select('id,full_name').in('id',ids),5000,'Withdrawal users'):{data:[],error:null};
   if(pr.error)throw pr.error; const names=Object.fromEntries((pr.data||[]).map(x=>[x.id,x.full_name]));
-  el.innerHTML=rows.map(x=>{const masked=x.account_number?`••••${esc(String(x.account_number).slice(-4))}`:'—';let buttons='';if(x.status==='pending')buttons=`<button class="approve" onclick="withdrawAction('${x.id}','approve')">Approve</button><button class="reject" onclick="withdrawAction('${x.id}','reject')">Reject</button>`;else if(x.status==='approved')buttons=`<button class="approve" onclick="withdrawAction('${x.id}','processing')">Mark processing</button>`;else if(x.status==='processing')buttons=`<button class="approve" onclick="withdrawAction('${x.id}','complete')">Mark paid</button><button class="reject" onclick="withdrawAction('${x.id}','fail')">Fail</button>`;return `<article class="queue-card"><div><span class="tag ${esc(x.status)}">${esc(x.status)}</span><h3>${money(x.amount_kobo)}</h3><p><b>${esc(names[x.user_id]||'User')}</b> · ${fmt(x.created_at)}</p><div class="bank"><span>Account: ${esc(x.account_name||'—')}</span><span>${masked}</span><span>Bank code: ${esc(x.bank_code||'—')}</span></div>${x.failure_reason?`<p class="error-text">${esc(x.failure_reason)}</p>`:''}</div><div class="actions">${buttons}</div></article>`}).join('');
+  el.innerHTML=rows.map(x=>{
+    const masked=x.account_number?`••••${esc(String(x.account_number).slice(-4))}`:'—';
+    let buttons='';
+    if(x.status==='pending') buttons=`<button class="approve" onclick="withdrawAction('${x.id}','approve')">Approve</button><button class="reject" onclick="withdrawAction('${x.id}','reject')">Reject</button>`;
+    else if(x.status==='approved') buttons=`<button class="approve" onclick="withdrawAction('${x.id}','pay')">Pay withdrawal</button>`;
+    else if(x.status==='processing') buttons=`<button class="approve" onclick="withdrawAction('${x.id}','verify')">Verify payout</button><button class="reject" onclick="withdrawAction('${x.id}','fail')">Fail</button>`;
+    const ref=x.paystack_reference?`<span>Ref: ${esc(x.paystack_reference)}</span>`:'';
+    return `<article class="queue-card"><div><span class="tag ${esc(x.status)}">${esc(x.status)}</span><h3>${money(x.amount_kobo)}</h3><p><b>${esc(names[x.user_id]||'User')}</b> · ${fmt(x.created_at)}</p><div class="bank"><span>Account: ${esc(x.account_name||'—')}</span><span>${masked}</span><span>Bank code: ${esc(x.bank_code||'—')}</span>${ref}</div>${x.failure_reason?`<p class="error-text">${esc(x.failure_reason)}</p>`:''}</div><div class="actions">${buttons}</div></article>`;
+  }).join('');
 }
 
 async function loadTasks(){
@@ -106,9 +114,37 @@ async function refreshAll(){
 }
 
 async function reviewTask(id,action){if(!confirm(`${action==='approve'?'Approve':'Reject'} this task submission?`))return;try{await rpc(action==='approve'?'approve_task_completion':'reject_task_completion',{p_completion_id:id});toast(`Task ${action}d successfully`);await refreshAll();}catch(e){toast(e.message||'Operation failed',true);}}
-async function withdrawAction(id,action){let fn='',args={p_withdrawal_id:id};if(action==='approve')fn='approve_withdrawal';if(action==='reject'){fn='reject_withdrawal';args.p_reason=prompt('Reason for rejection:')||'Rejected by admin';}if(action==='processing')fn='mark_withdrawal_processing';if(action==='complete'){fn='complete_withdrawal';args.p_paystack_reference=prompt('Paystack payout reference:')||'';if(!args.p_paystack_reference)return;}if(action==='fail'){fn='fail_withdrawal';args.p_reason=prompt('Failure reason:')||'Payment failed';}if(!confirm('Continue with this withdrawal action?'))return;try{await rpc(fn,args);toast('Withdrawal updated');await refreshAll();}catch(e){toast(e.message||'Operation failed',true);}}
+
+async function payoutAction(id,action){
+  if(!sb?.functions) throw new Error('Secure payout service is unavailable');
+  const label=action==='initiate'?'start the bank payout':'verify the bank payout';
+  if(!confirm(`Continue and ${label}?`))return;
+  try{
+    toast(action==='initiate'?'Starting secure payout…':'Checking payout status…');
+    const r=await timeout(sb.functions.invoke('vickiearn-payout',{body:{withdrawal_id:id,action}}),15000,'Payout service');
+    if(r.error) throw r.error;
+    const data=r.data||{};
+    if(!data.status) throw new Error(data.message||'Payout service rejected the request');
+    toast(data.message||'Payout updated');
+    await refreshAll();
+  }catch(e){console.error('Payout:',e);toast(e.message||'Payout operation failed',true);}
+}
+
+async function withdrawAction(id,action){
+  try{
+    if(action==='pay') return await payoutAction(id,'initiate');
+    if(action==='verify') return await payoutAction(id,'verify');
+    let fn='',args={p_withdrawal_id:id};
+    if(action==='approve')fn='approve_withdrawal';
+    if(action==='reject'){fn='reject_withdrawal';args.p_reason=prompt('Reason for rejection:')||'Rejected by admin';}
+    if(action==='fail'){fn='fail_withdrawal';args.p_reason=prompt('Failure reason:')||'Payment failed';}
+    if(!fn)return;
+    if(!confirm('Continue with this withdrawal action?'))return;
+    await rpc(fn,args);toast('Withdrawal updated');await refreshAll();
+  }catch(e){toast(e.message||'Operation failed',true);}
+}
+
 async function logout(){if(sb)await sb.auth.signOut();location.href='index.html';}
 window.refreshAll=refreshAll;window.reviewTask=reviewTask;window.withdrawAction=withdrawAction;window.logout=logout;
-
 window.addEventListener('error',e=>{console.error(e.error||e.message);status('Admin script error — tap Refresh',true);});
 setTimeout(()=>{if($('adminEmail')?.textContent.includes('Starting'))refreshAll();},100);

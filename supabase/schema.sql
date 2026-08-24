@@ -140,16 +140,16 @@ returns boolean language sql stable security definer set search_path = public as
   select exists(select 1 from public.profiles where id = auth.uid() and role = 'admin');
 $$;
 
-create or replace function public.approve_task_completion(completion_id uuid)
+-- Task completion approval intentionally has no per-task completion cap.
+create or replace function public.approve_task_completion(p_completion_id uuid)
 returns void language plpgsql security definer set search_path = public as $$
 declare c public.task_completions; t public.tasks; tx uuid;
 begin
   if not public.is_admin() then raise exception 'admin access required'; end if;
-  select * into c from public.task_completions where id = completion_id for update;
+  select * into c from public.task_completions where id = p_completion_id for update;
   if c.id is null or c.status <> 'pending' then raise exception 'invalid completion'; end if;
   select * into t from public.tasks where id = c.task_id for update;
   if t.status <> 'active' then raise exception 'task is not active'; end if;
-  if t.max_completions is not null and t.completion_count >= t.max_completions then raise exception 'task limit reached'; end if;
   insert into public.transactions(user_id,type,amount_kobo,reference,description,metadata)
   values(c.user_id,'task_reward',t.reward_kobo,'task:'||c.id,'Task reward',jsonb_build_object('task_id',t.id)) returning id into tx;
   update public.wallets set balance_kobo = balance_kobo + t.reward_kobo, lifetime_earned_kobo = lifetime_earned_kobo + t.reward_kobo, updated_at = now() where user_id = c.user_id;

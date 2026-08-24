@@ -3,7 +3,7 @@ const $ = (id) => document.getElementById(id);
 let busy = false;
 
 const money = (n) => `₦${(Number(n || 0) / 100).toLocaleString('en-NG',{minimumFractionDigits:2,maximumFractionDigits:2})}`;
-const esc = (v) => String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const esc = (v) => String(v ?? '').replace(/[&<>\"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;',"'":'&#39;'}[c]));
 const fmt = (d) => d ? new Date(d).toLocaleString('en-NG',{dateStyle:'medium',timeStyle:'short'}) : '—';
 const timeout = (p, ms, label) => Promise.race([p, new Promise((_, reject) => setTimeout(() => reject(new Error(`${label} timed out`)), ms))]);
 
@@ -46,16 +46,27 @@ async function loadStats(){
 
 async function loadTaskQueue(){
   const boxEl=$('taskQueue');
-  const q=await timeout(sb.from('task_completions').select('id,task_id,user_id,status,proof,created_at').eq('status','pending').order('created_at',{ascending:false}).limit(50),6000,'Task reviews');
-  if(q.error)throw q.error; const rows=q.data||[];
+  const rows=[];
+  for(let from=0;;from+=500){
+    const q=await timeout(sb.from('task_completions').select('id,task_id,user_id,status,proof,created_at').eq('status','pending').order('created_at',{ascending:false}).range(from,from+499),6000,'Task reviews');
+    if(q.error)throw q.error;
+    const batch=q.data||[];
+    rows.push(...batch);
+    if(batch.length<500)break;
+  }
   if(!rows.length){boxEl.innerHTML='<div class="empty">No pending task submissions.</div>';return;}
   const tids=[...new Set(rows.map(x=>x.task_id).filter(Boolean))], uids=[...new Set(rows.map(x=>x.user_id).filter(Boolean))];
-  const [tr,pr]=await Promise.all([
-    tids.length?timeout(sb.from('tasks').select('id,title,reward_kobo').in('id',tids),5000,'Task details'):Promise.resolve({data:[],error:null}),
-    uids.length?timeout(sb.from('profiles').select('id,full_name').in('id',uids),5000,'User details'):Promise.resolve({data:[],error:null})
+  const taskBatches=[];
+  for(let i=0;i<tids.length;i+=500)taskBatches.push(tids.slice(i,i+500));
+  const userBatches=[];
+  for(let i=0;i<uids.length;i+=500)userBatches.push(uids.slice(i,i+500));
+  const [trChunks,prChunks]=await Promise.all([
+    Promise.all(taskBatches.map(ids=>timeout(sb.from('tasks').select('id,title,reward_kobo').in('id',ids),5000,'Task details'))),
+    Promise.all(userBatches.map(ids=>timeout(sb.from('profiles').select('id,full_name').in('id',ids),5000,'User details')))
   ]);
-  if(tr.error)throw tr.error;if(pr.error)throw pr.error;
-  const tasks=Object.fromEntries((tr.data||[]).map(x=>[x.id,x])), users=Object.fromEntries((pr.data||[]).map(x=>[x.id,x]));
+  for(const r of [...trChunks,...prChunks])if(r.error)throw r.error;
+  const tasks=Object.fromEntries(trChunks.flatMap(r=>r.data||[]).map(x=>[x.id,x]));
+  const users=Object.fromEntries(prChunks.flatMap(r=>r.data||[]).map(x=>[x.id,x]));
   boxEl.innerHTML=rows.map(x=>{const t=tasks[x.task_id]||{},u=users[x.user_id]||{};return `<article class="queue-card"><div><span class="tag pending">Pending</span><h3>${esc(t.title||'Task submission')}</h3><p><b>${esc(u.full_name||'User')}</b> · ${money(t.reward_kobo)} · ${fmt(x.created_at)}</p><details><summary>View proof</summary><pre>${esc(JSON.stringify(x.proof||{},null,2))}</pre></details></div><div class="actions"><button class="approve" onclick="reviewTask('${x.id}','approve')">Approve</button><button class="reject" onclick="reviewTask('${x.id}','reject')">Reject</button></div></article>`}).join('');
 }
 
@@ -73,7 +84,7 @@ async function loadWithdrawals(){
 async function loadTasks(){
   const el=$('tasks'); const q=await timeout(sb.from('tasks').select('id,title,description,reward_kobo,status,max_completions,completion_count,created_at').order('created_at',{ascending:false}).limit(100),6000,'Tasks');
   if(q.error)throw q.error; const rows=q.data||[]; if(!rows.length){el.innerHTML='<div class="empty">No tasks configured.</div>';return;}
-  el.innerHTML=rows.map(x=>`<article class="task-row"><div><span class="tag ${esc(x.status)}">${esc(x.status)}</span><h3>${esc(x.title)}</h3><p>${esc(x.description||'')}</p></div><div class="task-meta"><b>${money(x.reward_kobo)}</b><small>${x.completion_count||0}${x.max_completions?` / ${x.max_completions}`:''} completions</small></div></article>`).join('');
+  el.innerHTML=rows.map(x=>`<article class="task-row"><div><span class="tag ${esc(x.status)}">${esc(x.status)}</span><h3>${esc(x.title)}</h3><p>${esc(x.description||'')}</p></div><div class="task-meta"><b>${money(x.reward_kobo)}</b><small>${x.completion_count||0} completions</small></div></article>`).join('');
 }
 
 async function loadUsers(){

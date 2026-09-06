@@ -9,6 +9,7 @@ let latestQr = null;
 let botReady = false;
 const warnings = new Map();
 const spam = new Map();
+const botSignals = new Map();
 
 const client = new Client({
   authStrategy: new LocalAuth({ clientId: 'whatsapp-moderator' }),
@@ -58,7 +59,6 @@ client.on('message', async (message) => {
     const chat = await message.getChat();
     const text = message.body.trim();
 
-    // Commands work in BOTH private chats and groups.
     if (text === '!help') {
       await safeReply(message,
 `🤖 *WHATSAPP BOT*
@@ -74,7 +74,8 @@ Group moderation commands (admins only):
 
 Group protection:
 🛡️ Anti-spam
-🛡️ Anti-mass-mention`);
+🛡️ Anti-mass-mention
+🤖 Anti-bot behavior detection`);
       return;
     }
 
@@ -83,7 +84,6 @@ Group protection:
       return;
     }
 
-    // The remaining moderation/protection features apply to groups only.
     if (!chat.isGroup) return;
 
     const senderId = message.author || message.from;
@@ -123,7 +123,7 @@ Group protection:
       return;
     }
 
-    // Anti-mass-mention: delete messages mentioning 5 or more people.
+    // Anti-mass-mention.
     if (message.mentionedIds && message.mentionedIds.length >= 5) {
       await message.delete(true);
       const sender = await message.getContact();
@@ -131,19 +131,48 @@ Group protection:
       return;
     }
 
-    // Anti-spam applies to groups, not private conversations.
     const now = Date.now();
     const history = spam.get(senderId) || [];
     const recent = history.filter(t => now - t < 10000);
     recent.push(now);
     spam.set(senderId, recent);
 
+    // Anti-spam: 7 messages in 10 seconds triggers deletion of the latest message.
     if (recent.length >= 7) {
       await message.delete(true);
       const sender = await message.getContact();
       await safeReply(message, `🚨 @${sender.number}, spam detected. Please slow down.`, [sender]);
       spam.set(senderId, []);
+      return;
     }
+
+    // Behavioral anti-bot: do not claim certainty; score repeated automation-like behavior.
+    // A score of 3 triggers a warning/deletion. Admins are never auto-moderated.
+    const contact = await message.getContact();
+    const participant = chat.participants.find(p => p.id._serialized === contact.id._serialized);
+    if (participant && participant.isAdmin) return;
+
+    const signal = botSignals.get(senderId) || { lastText: '', sameCount: 0, score: 0, lastTime: 0 };
+    const normalized = text.toLowerCase().replace(/\s+/g, ' ').trim();
+    if (normalized && normalized === signal.lastText && now - signal.lastTime < 30000) {
+      signal.sameCount += 1;
+    } else {
+      signal.sameCount = 0;
+    }
+    if (signal.sameCount >= 2) signal.score += 1;
+    if (recent.length >= 4) signal.score += 1;
+    if (message.mentionedIds && message.mentionedIds.length >= 3) signal.score += 1;
+
+    signal.lastText = normalized;
+    signal.lastTime = now;
+
+    if (signal.score >= 3) {
+      await message.delete(true);
+      await safeReply(message, `🤖 @${contact.number}, suspicious automated behavior detected. Please stop repeated messages.`, [contact]);
+      signal.score = 0;
+      signal.sameCount = 0;
+    }
+    botSignals.set(senderId, signal);
   } catch (error) {
     console.error('Message handler error:', error.message);
   }

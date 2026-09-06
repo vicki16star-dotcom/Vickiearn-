@@ -14,6 +14,7 @@ const client = new Client({
   authStrategy: new LocalAuth({ clientId: 'whatsapp-moderator' }),
   puppeteer: {
     headless: true,
+    executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
     args: ['--no-sandbox', '--disable-setuid-sandbox']
   }
 });
@@ -140,7 +141,7 @@ Group protection:
     if (recent.length >= 7) {
       await message.delete(true);
       const sender = await message.getContact();
-      await safeReply(message, `🚨 @${sender.number}, spam detected. Please slow down.` , [sender]);
+      await safeReply(message, `🚨 @${sender.number}, spam detected. Please slow down.`, [sender]);
       spam.set(senderId, []);
     }
   } catch (error) {

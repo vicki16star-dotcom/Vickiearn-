@@ -12,7 +12,10 @@ const spam = new Map();
 const botSignals = new Map();
 
 const client = new Client({
-  authStrategy: new LocalAuth({ clientId: 'whatsapp-moderator' }),
+  authStrategy: new LocalAuth({
+    clientId: 'whatsapp-moderator',
+    dataPath: process.env.WHATSAPP_AUTH_PATH || '/app/.wwebjs_auth'
+  }),
   puppeteer: {
     headless: true,
     executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
@@ -146,8 +149,7 @@ Group protection:
       return;
     }
 
-    // Behavioral anti-bot: do not claim certainty; score repeated automation-like behavior.
-    // A score of 3 triggers a warning/deletion. Admins are never auto-moderated.
+    // Behavioral anti-bot: this detects suspicious repetition/pacing; it cannot prove that a user is a bot.
     const contact = await message.getContact();
     const participant = chat.participants.find(p => p.id._serialized === contact.id._serialized);
     if (participant && participant.isAdmin) return;

@@ -168,7 +168,6 @@ client.on('message', async message => {
       return;
     }
 
-    // Anti-mass-mention: five or more mentions in one message.
     if (message.mentionedIds && message.mentionedIds.length >= 5) {
       await removeMessage(message);
       await send(chat, `🚫 @${contact.number}, mass mentioning is not allowed.`, [contact]);
@@ -213,13 +212,34 @@ client.on('message', async message => {
   }
 });
 
-app.get('/', (_req, res) => res.send(`<h2>WhatsApp Moderation Bot</h2><p>Status: ${botReady ? 'ONLINE' : 'WAITING FOR WHATSAPP LINK'}</p><p><a href="/qr">Open QR code</a></p><p><a href="/health">Health</a></p>`));
-app.get('/qr', (_req, res) => {
-  if (botReady) return res.send('<h2>Bot is already linked and online.</h2>');
-  if (!latestQr) return res.status(503).send('<h2>QR code is not ready yet. Refresh in a few seconds.</h2>');
-  res.send(`<html><body style="font-family:sans-serif;text-align:center"><h2>Link WhatsApp</h2><p>WhatsApp → Linked devices → Link a device</p><img src="${latestQr}" width="420" /></body></html>`);
+// QR endpoint deliberately disables caching because WhatsApp QR codes expire quickly.
+function noCache(res) {
+  res.set({
+    'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0',
+    'Pragma': 'no-cache',
+    'Expires': '0',
+    'Surrogate-Control': 'no-store'
+  });
+}
+
+app.get('/', (_req, res) => {
+  noCache(res);
+  res.send(`<h2>WhatsApp Moderation Bot</h2><p>Status: ${botReady ? 'ONLINE' : 'WAITING FOR WHATSAPP LINK'}</p><p><a href="/qr">Open QR code</a></p><p><a href="/health">Health</a></p>`);
 });
-app.get('/health', (_req, res) => res.json({ ok: true, whatsappReady: botReady, blacklistSize: bannedNumbers.size }));
+
+app.get('/qr', (_req, res) => {
+  noCache(res);
+  if (botReady) return res.send('<h2>Bot is already linked and online.</h2>');
+  if (!latestQr) {
+    return res.send(`<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Cache-Control" content="no-store"></head><body style="font-family:sans-serif;text-align:center"><h2>Preparing WhatsApp QR...</h2><p id="status">Waiting for a fresh QR code. This page will check automatically.</p><script>setTimeout(()=>location.reload(),3000)</script></body></html>`);
+  }
+  res.send(`<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Cache-Control" content="no-store"></head><body style="font-family:sans-serif;text-align:center"><h2>Link WhatsApp</h2><p>WhatsApp → Linked devices → Link a device</p><img src="${latestQr}" width="420" style="max-width:95vw" /><p>QR refreshes automatically.</p><script>setTimeout(()=>location.reload(),18000)</script></body></html>`);
+});
+
+app.get('/health', (_req, res) => {
+  noCache(res);
+  res.json({ ok: true, whatsappReady: botReady, qrReady: Boolean(latestQr), blacklistSize: bannedNumbers.size });
+});
 
 app.listen(PORT, () => console.log(`Web server listening on port ${PORT}`));
 client.initialize().catch(err => console.error('Client initialization failed:', err));

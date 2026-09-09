@@ -1,6 +1,6 @@
 {
   "name": "whatsapp-moderation-bot",
-  "version": "2.0.6",
+  "version": "2.0.7",
   "private": true,
   "description": "WhatsApp group moderation bot with anti-spam, anti-mention and persistent blacklist",
   "main": "index.js",
@@ -8,7 +8,6 @@
   "engines": { "node": ">=20" },
   "dependencies": {
     "express": "^4.21.2",
-    "qrcode": "^1.5.4",
     "whatsapp-web.js": "github:wwebjs/whatsapp-web.js#main"
   }
 }

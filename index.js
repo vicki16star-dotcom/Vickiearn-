@@ -1,5 +1,4 @@
 const express = require('express');
-const QRCode = require('qrcode');
 const fs = require('fs');
 const path = require('path');
 const { Client, LocalAuth } = require('whatsapp-web.js');
@@ -36,7 +35,6 @@ const bannedNumbers = loadBans();
 const warnings = new Map();
 const spam = new Map();
 const botSignals = new Map();
-let latestQr = null;
 let botReady = false;
 let pairingCode = null;
 let pairingNumber = null;
@@ -46,28 +44,34 @@ const client = new Client({
   authStrategy: new LocalAuth({ clientId: 'whatsapp-moderator', dataPath: AUTH_DIR }),
   puppeteer: {
     headless: true,
-    executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
+    executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/chromium',
     args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
   }
 });
 
-client.on('qr', async qr => {
-  latestQr = await QRCode.toDataURL(qr, { width: 420, margin: 2 });
-  pairingCode = null;
-  pairingNumber = null;
-  pairingBusy = false;
-  botReady = false;
-  console.log('New WhatsApp QR available at /qr');
-});
 client.on('authenticated', () => {
   pairingCode = null;
   pairingNumber = null;
   pairingBusy = false;
-  console.log('WhatsApp authenticated.');
+  console.log('WhatsApp authenticated via phone-number pairing.');
 });
-client.on('ready', () => { botReady = true; latestQr = null; pairingCode = null; pairingNumber = null; pairingBusy = false; console.log('WhatsApp bot is READY.'); });
+
+client.on('ready', () => {
+  botReady = true;
+  pairingCode = null;
+  pairingNumber = null;
+  pairingBusy = false;
+  console.log('WhatsApp bot is READY. Phone-number pairing mode only.');
+});
+
 client.on('auth_failure', msg => console.error('Authentication failure:', msg));
-client.on('disconnected', reason => { botReady = false; console.log('WhatsApp disconnected:', reason); });
+client.on('disconnected', reason => {
+  botReady = false;
+  pairingCode = null;
+  pairingNumber = null;
+  pairingBusy = false;
+  console.log('WhatsApp disconnected:', reason);
+});
 
 async function getChat(message) { return message.getChat(); }
 async function isAdmin(message) {
@@ -90,7 +94,8 @@ async function enforceBlacklist(chat, contact) {
   if (!num || !bannedNumbers.has(num) || !chat.isGroup) return false;
   const participant = chat.participants.find(p => p.id._serialized === contact.id._serialized);
   if (participant && !participant.isAdmin) {
-    try { await chat.removeParticipants([contact.id._serialized]); } catch (e) { console.error('Blacklist removal error:', e.message); }
+    try { await chat.removeParticipants([contact.id._serialized]); }
+    catch (e) { console.error('Blacklist removal error:', e.message); }
     await send(chat, `🚫 @${contact.number || num} is on the bot blacklist and was removed.`, [contact]);
     return true;
   }
@@ -157,7 +162,10 @@ client.on('message', async message => {
       if (participant && participant.isAdmin) return send(chat, '❌ I will not blacklist a group admin.');
       bannedNumbers.add(num);
       saveBans();
-      if (participant) { try { await chat.removeParticipants([user.id._serialized]); } catch (e) { console.error('Ban removal error:', e.message); } }
+      if (participant) {
+        try { await chat.removeParticipants([user.id._serialized]); }
+        catch (e) { console.error('Ban removal error:', e.message); }
+      }
       await send(chat, `🚫 @${user.number || num} has been blacklisted by the bot.`, [user]);
       return;
     }
@@ -165,7 +173,9 @@ client.on('message', async message => {
     if (text.startsWith('!unban')) {
       if (!(await isAdmin(message))) return send(chat, '❌ Admins only.');
       const mentions = await message.getMentions();
-      let num = mentions.length ? numberFromId(mentions[0].id._serialized) : normalizeNumber(text.slice('!unban'.length));
+      const num = mentions.length
+        ? numberFromId(mentions[0].id._serialized)
+        : normalizeNumber(text.slice('!unban'.length));
       if (!num) return send(chat, '⚠️ Tag a user or provide a phone number with country code.');
       if (!bannedNumbers.delete(num)) return send(chat, 'ℹ️ That number is not on the blacklist.');
       saveBans();
@@ -176,7 +186,9 @@ client.on('message', async message => {
     if (text === '!banned') {
       if (!(await isAdmin(message))) return send(chat, '❌ Admins only.');
       const list = [...bannedNumbers];
-      await send(chat, list.length ? `🚫 *Blacklisted numbers (${list.length})*\n${list.map(n => `• +${n}`).join('\n')}` : '✅ Blacklist is empty.');
+      await send(chat, list.length
+        ? `🚫 *Blacklisted numbers (${list.length})*\n${list.map(n => `• +${n}`).join('\n')}`
+        : '✅ Blacklist is empty.');
       return;
     }
 
@@ -235,13 +247,13 @@ function noCache(res) {
 
 app.get('/', (_req, res) => {
   noCache(res);
-  res.send(`<h2>WhatsApp Moderation Bot</h2><p>Status: ${botReady ? 'ONLINE' : 'WAITING FOR WHATSAPP LINK'}</p><p><a href="/pair">Link with phone number</a></p><p><a href="/qr">Open QR code</a></p><p><a href="/health">Health</a></p>`);
+  res.send(`<h2>WhatsApp Moderation Bot</h2><p>Status: ${botReady ? 'ONLINE' : 'WAITING FOR WHATSAPP LINK'}</p><p><a href="/pair">Link with phone number</a></p><p><a href="/health">Health</a></p>`);
 });
 
 app.get('/pair', (_req, res) => {
   noCache(res);
   if (botReady) return res.send('<h2>Bot is already linked and online.</h2>');
-  res.send(`<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Cache-Control" content="no-store"><title>Link WhatsApp</title></head><body style="font-family:sans-serif;text-align:center;padding:25px"><h2>Link WhatsApp by phone number</h2><p>Enter your WhatsApp number with country code, digits only.</p><p>Example: <b>2348012345678</b></p><form method="POST" action="/pair"><input name="phone" inputmode="numeric" autocomplete="tel" placeholder="2348012345678" required style="padding:12px;font-size:18px;max-width:280px"><br><button type="submit" style="margin-top:15px;padding:12px 22px;font-size:17px">Get pairing code</button></form><p style="margin-top:25px"><a href="/qr">Use QR instead</a></p></body></html>`);
+  res.send(`<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Cache-Control" content="no-store"><title>Link WhatsApp</title></head><body style="font-family:sans-serif;text-align:center;padding:25px"><h2>Link WhatsApp by phone number</h2><p>Enter your WhatsApp number with country code, digits only.</p><p>Example: <b>2348012345678</b></p><form method="POST" action="/pair"><input name="phone" inputmode="numeric" autocomplete="tel" placeholder="2348012345678" required style="padding:12px;font-size:18px;max-width:280px"><br><button type="submit" style="margin-top:15px;padding:12px 22px;font-size:17px">Get pairing code</button></form><p style="margin-top:25px">QR connection is disabled. Use phone-number pairing only.</p></body></html>`);
 });
 
 app.post('/pair', async (req, res) => {
@@ -260,7 +272,7 @@ app.post('/pair', async (req, res) => {
   try {
     if (typeof client.requestPairingCode !== 'function') {
       pairingBusy = false;
-      return res.status(501).send('<h2>Pairing code is not available</h2><p>The installed WhatsApp Web library does not expose the pairing-code API. The QR method is still available.</p><p><a href="/qr">Use QR</a></p>');
+      return res.status(501).send('<h2>Phone-number pairing is unavailable</h2><p>The installed WhatsApp Web library does not expose the pairing-code API.</p><p><a href="/pair">Try again</a></p>');
     }
     pairingCode = await client.requestPairingCode(phone);
     pairingBusy = false;
@@ -273,19 +285,11 @@ app.post('/pair', async (req, res) => {
   }
 });
 
-app.get('/qr', (_req, res) => {
-  noCache(res);
-  if (botReady) return res.send('<h2>Bot is already linked and online.</h2>');
-  if (!latestQr) {
-    return res.send(`<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Cache-Control" content="no-store"></head><body style="font-family:sans-serif;text-align:center"><h2>Preparing WhatsApp QR...</h2><p id="status">Waiting for a fresh QR code. This page will check automatically.</p><script>setTimeout(()=>location.reload(),3000)</script></body></html>`);
-  }
-  res.send(`<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Cache-Control" content="no-store"></head><body style="font-family:sans-serif;text-align:center"><h2>Link WhatsApp</h2><p>WhatsApp → Linked devices → Link a device</p><img src="${latestQr}" width="420" style="max-width:95vw" /><p>QR refreshes automatically.</p><script>setTimeout(()=>location.reload(),18000)</script></body></html>`);
-});
-
 app.get('/health', (_req, res) => {
   noCache(res);
-  res.json({ ok: true, whatsappReady: botReady, qrReady: Boolean(latestQr), pairingCodeReady: Boolean(pairingCode), blacklistSize: bannedNumbers.size });
+  res.json({ ok: true, whatsappReady: botReady, pairingCodeReady: Boolean(pairingCode), pairingNumber: pairingNumber ? `+${pairingNumber}` : null, qrEnabled: false, blacklistSize: bannedNumbers.size });
 });
 
 app.listen(PORT, () => console.log(`Web server listening on port ${PORT}`));
+console.log('Phone-number pairing mode only — QR connection disabled.');
 client.initialize().catch(err => console.error('Client initialization failed:', err));

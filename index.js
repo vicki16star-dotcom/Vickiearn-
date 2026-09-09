@@ -11,6 +11,7 @@ const AUTH_DIR = process.env.WHATSAPP_AUTH_PATH || path.join(DATA_DIR, '.wwebjs_
 const BAN_FILE = path.join(DATA_DIR, 'banned.json');
 
 fs.mkdirSync(DATA_DIR, { recursive: true });
+app.use(express.urlencoded({ extended: false }));
 
 function loadBans() {
   try {
@@ -37,6 +38,9 @@ const spam = new Map();
 const botSignals = new Map();
 let latestQr = null;
 let botReady = false;
+let pairingCode = null;
+let pairingNumber = null;
+let pairingBusy = false;
 
 const client = new Client({
   authStrategy: new LocalAuth({ clientId: 'whatsapp-moderator', dataPath: AUTH_DIR }),
@@ -49,11 +53,19 @@ const client = new Client({
 
 client.on('qr', async qr => {
   latestQr = await QRCode.toDataURL(qr, { width: 420, margin: 2 });
+  pairingCode = null;
+  pairingNumber = null;
+  pairingBusy = false;
   botReady = false;
   console.log('New WhatsApp QR available at /qr');
 });
-client.on('authenticated', () => console.log('WhatsApp authenticated.'));
-client.on('ready', () => { botReady = true; latestQr = null; console.log('WhatsApp bot is READY.'); });
+client.on('authenticated', () => {
+  pairingCode = null;
+  pairingNumber = null;
+  pairingBusy = false;
+  console.log('WhatsApp authenticated.');
+});
+client.on('ready', () => { botReady = true; latestQr = null; pairingCode = null; pairingNumber = null; pairingBusy = false; console.log('WhatsApp bot is READY.'); });
 client.on('auth_failure', msg => console.error('Authentication failure:', msg));
 client.on('disconnected', reason => { botReady = false; console.log('WhatsApp disconnected:', reason); });
 
@@ -212,7 +224,6 @@ client.on('message', async message => {
   }
 });
 
-// QR endpoint deliberately disables caching because WhatsApp QR codes expire quickly.
 function noCache(res) {
   res.set({
     'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0',
@@ -224,7 +235,42 @@ function noCache(res) {
 
 app.get('/', (_req, res) => {
   noCache(res);
-  res.send(`<h2>WhatsApp Moderation Bot</h2><p>Status: ${botReady ? 'ONLINE' : 'WAITING FOR WHATSAPP LINK'}</p><p><a href="/qr">Open QR code</a></p><p><a href="/health">Health</a></p>`);
+  res.send(`<h2>WhatsApp Moderation Bot</h2><p>Status: ${botReady ? 'ONLINE' : 'WAITING FOR WHATSAPP LINK'}</p><p><a href="/pair">Link with phone number</a></p><p><a href="/qr">Open QR code</a></p><p><a href="/health">Health</a></p>`);
+});
+
+app.get('/pair', (_req, res) => {
+  noCache(res);
+  if (botReady) return res.send('<h2>Bot is already linked and online.</h2>');
+  res.send(`<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Cache-Control" content="no-store"><title>Link WhatsApp</title></head><body style="font-family:sans-serif;text-align:center;padding:25px"><h2>Link WhatsApp by phone number</h2><p>Enter your WhatsApp number with country code, digits only.</p><p>Example: <b>2348012345678</b></p><form method="POST" action="/pair"><input name="phone" inputmode="numeric" autocomplete="tel" placeholder="2348012345678" required style="padding:12px;font-size:18px;max-width:280px"><br><button type="submit" style="margin-top:15px;padding:12px 22px;font-size:17px">Get pairing code</button></form><p style="margin-top:25px"><a href="/qr">Use QR instead</a></p></body></html>`);
+});
+
+app.post('/pair', async (req, res) => {
+  noCache(res);
+  if (botReady) return res.send('<h2>Bot is already linked and online.</h2>');
+  if (pairingBusy) return res.send('<h2>Pairing request already in progress.</h2><p>Wait for the current code or restart the page.</p>');
+
+  const phone = normalizeNumber(req.body.phone);
+  if (!/^\d{10,15}$/.test(phone)) {
+    return res.status(400).send('<h2>Invalid phone number</h2><p>Use digits only, including your country code. Example: 2348012345678</p><p><a href="/pair">Try again</a></p>');
+  }
+
+  pairingBusy = true;
+  pairingNumber = phone;
+  pairingCode = null;
+  try {
+    if (typeof client.requestPairingCode !== 'function') {
+      pairingBusy = false;
+      return res.status(501).send('<h2>Pairing code is not available</h2><p>The installed WhatsApp Web library does not expose the pairing-code API. The QR method is still available.</p><p><a href="/qr">Use QR</a></p>');
+    }
+    pairingCode = await client.requestPairingCode(phone);
+    pairingBusy = false;
+    return res.send(`<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Cache-Control" content="no-store"><meta http-equiv="refresh" content="8"></head><body style="font-family:sans-serif;text-align:center;padding:25px"><h2>Your WhatsApp pairing code</h2><div style="font-size:32px;font-weight:bold;letter-spacing:5px;margin:25px 0">${pairingCode}</div><p>On your phone:</p><p><b>WhatsApp → Settings → Linked devices → Link a device → Link with phone number instead</b></p><p>Enter the code shown above.</p><p>Keep this page open until the bot says it is linked.</p><p><a href="/pair">Request another code</a></p></body></html>`);
+  } catch (error) {
+    pairingBusy = false;
+    pairingCode = null;
+    console.error('Pairing code error:', error.stack || error.message);
+    return res.status(500).send(`<h2>Could not create pairing code</h2><p>${String(error.message || error).replace(/[<>&]/g, '')}</p><p><a href="/pair">Try again</a></p>`);
+  }
 });
 
 app.get('/qr', (_req, res) => {
@@ -238,7 +284,7 @@ app.get('/qr', (_req, res) => {
 
 app.get('/health', (_req, res) => {
   noCache(res);
-  res.json({ ok: true, whatsappReady: botReady, qrReady: Boolean(latestQr), blacklistSize: bannedNumbers.size });
+  res.json({ ok: true, whatsappReady: botReady, qrReady: Boolean(latestQr), pairingCodeReady: Boolean(pairingCode), blacklistSize: bannedNumbers.size });
 });
 
 app.listen(PORT, () => console.log(`Web server listening on port ${PORT}`));

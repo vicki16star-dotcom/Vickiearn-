@@ -40,5 +40,8 @@ COPY package*.json ./
 RUN npm install --omit=dev
 COPY . .
 
+# QR codes are no longer exposed or used for pairing. WhatsApp pairing is phone-number/code only.
+RUN sed -i "/const QRCode = require('qrcode');/d; /client.on('qr', async qr => {/,+7d; s#<p><a href=\\\"/qr\\\">Open QR code</a></p>##g; s#<p style=\\\"margin-top:25px\\\"><a href=\\\"/qr\\\">Use QR instead</a></p>##g; s#The QR method is still available\\.##g; s#<p><a href=\\\"/qr\\\">Use QR</a></p>##g" index.js
+
 EXPOSE 3000
 CMD ["npm", "start"]

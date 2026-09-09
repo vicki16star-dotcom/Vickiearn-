@@ -1,1 +1,0 @@
-Production payment verification function. Deployment is managed from Supabase Edge Functions.

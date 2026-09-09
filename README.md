@@ -1,10 +1,20 @@
-# Vickiearn-
-A way of earning
+# WhatsApp Moderation Bot
 
-## Deployment
+Commands:
+- `!help`
+- `!ping`
+- `!delete` (admin)
+- `!warn @user` (admin)
+- `!kick @user` (admin)
+- `!ban @user` (admin)
+- `!unban @user` (admin)
+- `!banned` (admin)
 
-This is a static website deployed with GitHub Pages via GitHub Actions.
+Protection:
+- Anti-spam
+- Anti-mass-mention
+- Persistent bot blacklist
+- Admin-only moderation commands
 
-Deployment workflow: `.github/workflows/pages.yml`.
-
-Deployment trigger has been refreshed.
+## Render
+Deploy as Docker. The app exposes port 3000. Use a persistent disk mounted at `/app/data` so the WhatsApp session and blacklist survive restarts. Open `/qr` to link the WhatsApp account.

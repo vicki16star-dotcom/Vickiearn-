@@ -39,6 +39,8 @@ let botReady = false;
 let pairingCode = null;
 let pairingNumber = null;
 let pairingBusy = false;
+let pairingStartedAt = 0;
+let pairingTimer = null;
 
 const client = new Client({
   authStrategy: new LocalAuth({ clientId: 'whatsapp-moderator', dataPath: AUTH_DIR }),
@@ -49,27 +51,42 @@ const client = new Client({
   }
 });
 
-client.on('authenticated', () => {
+function clearPairingState() {
   pairingCode = null;
   pairingNumber = null;
   pairingBusy = false;
+  pairingStartedAt = 0;
+  if (pairingTimer) {
+    clearTimeout(pairingTimer);
+    pairingTimer = null;
+  }
+}
+
+function armPairingTimeout() {
+  if (pairingTimer) clearTimeout(pairingTimer);
+  pairingTimer = setTimeout(() => {
+    if (pairingBusy) {
+      console.log('Pairing request timed out; clearing pairing lock.');
+      clearPairingState();
+    }
+  }, 45000);
+}
+
+client.on('authenticated', () => {
+  clearPairingState();
   console.log('WhatsApp authenticated via phone-number pairing.');
 });
 
 client.on('ready', () => {
   botReady = true;
-  pairingCode = null;
-  pairingNumber = null;
-  pairingBusy = false;
+  clearPairingState();
   console.log('WhatsApp bot is READY. Phone-number pairing mode only.');
 });
 
 client.on('auth_failure', msg => console.error('Authentication failure:', msg));
 client.on('disconnected', reason => {
   botReady = false;
-  pairingCode = null;
-  pairingNumber = null;
-  pairingBusy = false;
+  clearPairingState();
   console.log('WhatsApp disconnected:', reason);
 });
 
@@ -253,13 +270,23 @@ app.get('/', (_req, res) => {
 app.get('/pair', (_req, res) => {
   noCache(res);
   if (botReady) return res.send('<h2>Bot is already linked and online.</h2>');
+  if (pairingBusy) {
+    const age = pairingStartedAt ? Math.round((Date.now() - pairingStartedAt) / 1000) : 0;
+    return res.send(`<h2>Pairing request already in progress.</h2><p>The current request has been running for ${age}s.</p><p>Please wait up to 45 seconds, then refresh this page.</p><meta http-equiv="refresh" content="5">`);
+  }
   res.send(`<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Cache-Control" content="no-store"><title>Link WhatsApp</title></head><body style="font-family:sans-serif;text-align:center;padding:25px"><h2>Link WhatsApp by phone number</h2><p>Enter your WhatsApp number with country code, digits only.</p><p>Example: <b>2348012345678</b></p><form method="POST" action="/pair"><input name="phone" inputmode="numeric" autocomplete="tel" placeholder="2348012345678" required style="padding:12px;font-size:18px;max-width:280px"><br><button type="submit" style="margin-top:15px;padding:12px 22px;font-size:17px">Get pairing code</button></form><p style="margin-top:25px">QR connection is disabled. Use phone-number pairing only.</p></body></html>`);
 });
 
 app.post('/pair', async (req, res) => {
   noCache(res);
   if (botReady) return res.send('<h2>Bot is already linked and online.</h2>');
-  if (pairingBusy) return res.send('<h2>Pairing request already in progress.</h2><p>Wait for the current code or restart the page.</p>');
+
+  // Recover automatically if an old request got stuck.
+  if (pairingBusy && pairingStartedAt && Date.now() - pairingStartedAt > 45000) {
+    console.log('Recovering stale pairing lock.');
+    clearPairingState();
+  }
+  if (pairingBusy) return res.send('<h2>Pairing request already in progress.</h2><p>Wait for the current request to finish.</p>');
 
   const phone = normalizeNumber(req.body.phone);
   if (!/^\d{10,15}$/.test(phone)) {
@@ -267,19 +294,28 @@ app.post('/pair', async (req, res) => {
   }
 
   pairingBusy = true;
+  pairingStartedAt = Date.now();
   pairingNumber = phone;
   pairingCode = null;
+  armPairingTimeout();
+
   try {
     if (typeof client.requestPairingCode !== 'function') {
-      pairingBusy = false;
+      clearPairingState();
       return res.status(501).send('<h2>Phone-number pairing is unavailable</h2><p>The installed WhatsApp Web library does not expose the pairing-code API.</p><p><a href="/pair">Try again</a></p>');
     }
-    pairingCode = await client.requestPairingCode(phone);
+
+    const codePromise = client.requestPairingCode(phone);
+    pairingCode = await Promise.race([
+      codePromise,
+      new Promise((_, reject) => setTimeout(() => reject(new Error('Pairing code request timed out after 45 seconds.')), 45000))
+    ]);
     pairingBusy = false;
+    if (pairingTimer) { clearTimeout(pairingTimer); pairingTimer = null; }
+
     return res.send(`<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Cache-Control" content="no-store"><meta http-equiv="refresh" content="8"></head><body style="font-family:sans-serif;text-align:center;padding:25px"><h2>Your WhatsApp pairing code</h2><div style="font-size:32px;font-weight:bold;letter-spacing:5px;margin:25px 0">${pairingCode}</div><p>On your phone:</p><p><b>WhatsApp → Settings → Linked devices → Link a device → Link with phone number instead</b></p><p>Enter the code shown above.</p><p>Keep this page open until the bot says it is linked.</p><p><a href="/pair">Request another code</a></p></body></html>`);
   } catch (error) {
-    pairingBusy = false;
-    pairingCode = null;
+    clearPairingState();
     console.error('Pairing code error:', error.stack || error.message);
     return res.status(500).send(`<h2>Could not create pairing code</h2><p>${String(error.message || error).replace(/[<>&]/g, '')}</p><p><a href="/pair">Try again</a></p>`);
   }
@@ -287,7 +323,7 @@ app.post('/pair', async (req, res) => {
 
 app.get('/health', (_req, res) => {
   noCache(res);
-  res.json({ ok: true, whatsappReady: botReady, pairingCodeReady: Boolean(pairingCode), pairingNumber: pairingNumber ? `+${pairingNumber}` : null, qrEnabled: false, blacklistSize: bannedNumbers.size });
+  res.json({ ok: true, whatsappReady: botReady, pairingCodeReady: Boolean(pairingCode), pairingNumber: pairingNumber ? `+${pairingNumber}` : null, pairingBusy, pairingAgeSeconds: pairingStartedAt ? Math.round((Date.now() - pairingStartedAt) / 1000) : 0, qrEnabled: false, blacklistSize: bannedNumbers.size });
 });
 
 app.listen(PORT, () => console.log(`Web server listening on port ${PORT}`));
